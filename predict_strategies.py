@@ -13,6 +13,7 @@ from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 import joblib
 import time
+import os
 
 print("Iniciando pre-cálculo de predicciones...")
 start_time = time.time()
@@ -21,7 +22,7 @@ start_time = time.time()
 SEQUENCE_LENGTH = 30
 MODEL_PATH = 'gru_strategy_selector.h5'
 SCALER_PATH = 'gru_scaler.joblib'
-DATA_ENRICHED_PATH = 'enriched_data.csv'
+DATA_ENRICHED_PATH = os.path.join('ibkr', 'output', 'enriched_data.csv')
 
 # Cargar modelo, scaler y datos
 model = load_model(MODEL_PATH)
@@ -87,7 +88,7 @@ predictions_df = pd.DataFrame(
 # Necesitamos también el ticker para el lookup en el backtest
 predictions_df = predictions_df.join(df['ticker'])
 
-output_path = 'predictions.csv'
+output_path = os.path.join('ibkr', 'output', 'predictions.csv')
 predictions_df.to_csv(output_path)
 
 end_time = time.time()

@@ -8,7 +8,7 @@ start_time = time.time()
 
 # --- 1.1. Carga de Datos ---
 print("\nFase 1.1: Cargando datos...")
-data_folder = 'ibkr'
+data_folder = os.path.join('ibkr', 'historic')
 assets = ['A.USD.csv', 'ABM.USD.csv']
 all_dfs = []
 
@@ -109,7 +109,7 @@ final_columns = [
 ]
 final_df = enriched_df[final_columns]
 
-output_path = 'enriched_data.csv'
+output_path = os.path.join('ibkr', 'output', 'enriched_data.csv')
 print(f"Guardando DataFrame final en '{output_path}'...")
 final_df.to_csv(output_path)
 

@@ -9,42 +9,51 @@ Este documento describe el proceso para utilizar el sistema de trading basado en
 
 ## Parte 1: Cómo Usar el Modelo para Invertir (Modo "Live")
 
-El objetivo es utilizar nuestro sistema para tomar una decisión de trading para el día siguiente. El proceso se debe ejecutar al final de cada día de mercado.
-
-### Requisitos
-
-1.  **Modelo Entrenado:** `gru_strategy_selector.h5`
-2.  **Escalador de Datos:** `gru_scaler.joblib`
-3.  **Fuente de Datos Diaria:** Un método para obtener los datos OHLCV del día que acaba de cerrar para los activos que sigues (ej. 'A' y 'ABM').
-4.  **Historial de Datos:** El fichero `enriched_data.csv` o una base de datos con la misma estructura.
+Para obtener una recomendación de inversión para el día siguiente, hemos automatizado el proceso en el script `live_prediction.py`.
 
 ### Proceso Diario (Paso a Paso)
 
 Al cierre de cada día de mercado, sigue estos pasos:
 
-**1. Obtener Datos Recientes:**
-   - Descarga los datos del día para tus activos.
+**1. Actualizar Datos Históricos:**
+   - Primero, asegúrate de que tu fuente de datos principal (ej. los ficheros CSV en `ibkr/`) contiene los datos OHLCV del día que acaba de cerrar.
+   - Luego, ejecuta el script de preparación de datos para recalcular los indicadores técnicos y actualizar el fichero `enriched_data.csv`.
+     ```bash
+     python data_preparation.py
+     ```
+   Este paso es **crucial** para que el modelo tenga la información más reciente.
 
-**2. Actualizar Indicadores:**
-   - Añade los nuevos datos a tu historial.
-   - Vuelve a ejecutar una versión del script `data_preparation.py` para calcular los indicadores técnicos (SMA, RSI, etc.) para todo el conjunto de datos actualizado. Es crucial que los cálculos se hagan sobre el historial completo para que los indicadores sean precisos.
+**2. Ejecutar el Script de Predicción en Vivo:**
+   - Una vez que `enriched_data.csv` está actualizado, ejecuta `live_prediction.py` especificando el activo que quieres analizar con el parámetro `--ticker`.
 
-**3. Crear la Secuencia de Inferencia:**
-   - Una vez actualizados los indicadores, toma los últimos **30 registros** (el `SEQUENCE_LENGTH` que usamos) de los datos de indicadores para el activo que quieres analizar.
+     ```bash
+     # Ejemplo para el activo 'A'
+     python live_prediction.py --ticker A
+     ```
 
-**4. Normalizar la Secuencia:**
-   - Carga el escalador con `joblib.load('gru_scaler.joblib')`.
-   - Aplica el escalador a tu secuencia de 30 días. **Importante:** Usa `scaler.transform()`, **NUNCA** `scaler.fit_transform()`, ya que debes usar la misma escala con la que el modelo fue entrenado.
+### Interpretar y Actuar
 
-**5. Hacer la Predicción:**
-   - Carga el modelo con `load_model('gru_strategy_selector.h5')`.
-   - Llama a `model.predict()` sobre tu secuencia normalizada.
+El script imprimirá en la consola la estrategia recomendada por el modelo para el siguiente día de mercado. Por ejemplo:
 
-**6. Interpretar y Actuar:**
-   - El modelo devolverá un valor entre 0 y 1.
-     - **Si es > 0.5:** El modelo recomienda **Momentum**.
-     - **Si es <= 0.5:** El modelo recomienda **Reversión a la Media**.
-   - Con esta decisión, comprueba las condiciones de tu estrategia para el día siguiente. Por ejemplo, si el modelo dice "Momentum", comprueba si la SMA de 50 días está por encima de la de 200. Si se cumple, puedes colocar una orden de compra.
+```
+==================================================
+RESULTADO DE LA PREDICCIÓN PARA 'A'
+Valor predicho por el modelo: 0.8123
+Estrategia recomendada para el próximo día de mercado: **Momentum**
+==================================================
+```
+
+- **Si recomienda Momentum:** Comprueba las condiciones de tu estrategia de momentum (ej. `SMA50 > SMA200`). Si se cumplen, puedes plantear una orden de compra.
+- **Si recomienda Reversión a la Media:** Comprueba las condiciones de tu estrategia de reversión (ej. `precio < banda de Bollinger inferior`). Si se cumplen, puedes plantear una orden de compra.
+
+### ¿Qué Hace el Script `live_prediction.py` Internamente?
+
+El script `live_prediction.py` sigue exactamente el proceso conceptual que se necesita para una predicción:
+1.  **Carga Datos:** Lee el fichero `enriched_data.csv` actualizado.
+2.  **Filtra y Selecciona:** Se queda con los datos del `ticker` solicitado y extrae los últimos **30 registros** (la longitud de la secuencia con la que fue entrenado el modelo).
+3.  **Normaliza:** Carga el escalador (`gru_scaler.joblib`) y normaliza los 30 registros. Es importante destacar que usa la transformación ya aprendida, sin reajustar el escalador.
+4.  **Predice:** Carga el modelo (`gru_strategy_selector.h5`) y le pasa la secuencia normalizada para obtener un valor entre 0 y 1.
+5.  **Informa:** Traduce ese valor a una recomendación (Momentum o Reversión a la Media) y la muestra en pantalla.
 
 ---
 
@@ -80,3 +89,39 @@ El proceso es sorprendentemente simple, ya que consiste en volver a ejecutar los
 
 - **Backup:** Antes de reentrenar, es una buena práctica hacer una copia de seguridad de los ficheros `.h5` y `.joblib` que estaban funcionando bien. Si por alguna razón el nuevo modelo funciona peor, puedes volver a la versión anterior.
 - **Evaluación Continua:** Después de cada reentrenamiento, fíjate en la "Precisión (Accuracy) en el conjunto de validación" que muestra el script. Si notas que la precisión decae consistentemente con cada reentrenamiento, es una señal de que el mercado ha cambiado tanto que las características (indicadores) que usas pueden ya no ser relevantes, y sería el momento de aplicar las mejoras que discutimos (añadir nuevos indicadores, cambiar la arquitectura del modelo, etc.).
+
+---
+
+## Parte 3: Evaluación de la Estrategia con Backtesting
+
+Una vez que tenemos un modelo entrenado, es fundamental evaluar su rendimiento histórico antes de arriesgar capital real. Este proceso se conoce como **backtesting**.
+
+### Propósito
+
+El backtesting simula la ejecución de nuestra estrategia de trading sobre datos históricos para medir su rentabilidad, riesgo y otras métricas de rendimiento. Nos permite responder a la pregunta: "¿Qué tan bien habría funcionado esta estrategia en el pasado?"
+
+### El Flujo de Trabajo de Backtesting
+
+El proceso se divide en dos scripts principales para maximizar la eficiencia:
+
+**1. `predict_strategies.py`**
+   - Este script es el primer paso. Carga el modelo GRU entrenado (`gru_strategy_selector.h5`) y el escalador (`gru_scaler.joblib`).
+   - Procesa el conjunto de datos de validación (el 20% que no se usó para entrenar) y, para cada día, predice qué estrategia se debería usar (Momentum o Reversión a la Media).
+   - Guarda estas decisiones en un archivo llamado `predictions.csv`. Este archivo actúa como una "hoja de ruta" de señales de trading para el backtest.
+
+**2. `run_backtest.py`**
+   - Este es el script que ejecuta la simulación histórica.
+   - **Referencia:** `run_backtest.py`
+   - Carga los datos históricos de los activos (por ejemplo, de la carpeta `ibkr/`).
+   - Carga el archivo `predictions.csv` generado en el paso anterior.
+   - Utiliza la librería `backtrader` para simular las operaciones:
+     - Día a día, consulta `predictions.csv` para ver la señal del modelo.
+     - Si la señal es "Momentum", aplica las reglas de compra/venta de la estrategia de momentum (ej. cruce de medias móviles).
+     - Si la señal es "Reversión", aplica las reglas de la estrategia de reversión (ej. Bandas de Bollinger).
+   - Al finalizar, informa el capital final de la cartera y genera un gráfico (`backtest_plot.png`) que muestra las operaciones realizadas sobre la evolución del precio.
+
+### ¿Por Qué Separar la Predicción del Backtesting?
+
+Separar estos dos pasos es una optimización clave. Cargar y ejecutar un modelo de TensorFlow (`.h5`) es un proceso computacionalmente costoso. Si lo hiciéramos dentro del bucle de `backtrader` (que itera sobre cientos o miles de días), el backtest sería extremadamente lento.
+
+Al pre-calcular todas las decisiones del modelo y guardarlas en un archivo CSV simple, el script `run_backtest.py` solo necesita leer una línea de un archivo de texto en cada paso, lo que lo hace increíblemente rápido y eficiente.

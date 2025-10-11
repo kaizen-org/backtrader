@@ -1,1 +1,9 @@
-"ibkr/*.csv" 
+# Ignorar datos históricos descargados
+ibkr/historic/
+
+# Ignorar ficheros de salida generados (predicciones, datos enriquecidos, etc.)
+ibkr/output/
+
+# Ignorar artefactos de modelos entrenados
+*.joblib
+*.h5

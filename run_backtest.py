@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 
 # --- Carga de Predicciones ---
-PREDICTIONS_PATH = 'predictions.csv'
+PREDICTIONS_PATH = os.path.join('ibkr', 'output', 'predictions.csv')
 
 print(f"Cargando predicciones desde {PREDICTIONS_PATH}...")
 predictions_df = pd.read_csv(PREDICTIONS_PATH, index_col='datetime', parse_dates=True)
@@ -109,7 +109,7 @@ if __name__ == '__main__':
     for asset_file in assets_to_backtest:
         ticker_name = asset_file.split('.')[0]
         data = bt.feeds.GenericCSVData(
-            dataname=os.path.join('ibkr', asset_file),
+            dataname=os.path.join('ibkr', 'historic', asset_file),
             dtformat=('%Y-%m-%d'),
             fromdate=start_date,
             todate=end_date,
