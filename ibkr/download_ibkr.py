@@ -3,6 +3,7 @@ import time
 import threading
 import pandas as pd
 import sys
+import os
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
@@ -89,7 +90,11 @@ def run(args):
     df['datetime'] = pd.to_datetime(df['datetime'])
     df.set_index('datetime', inplace=True)
 
-    outfile = f'{args.symbol.replace(" ", ".")}.{args.currency}.csv'
+    # Crear el directorio si no existe y construir la ruta de salida
+    output_dir = 'historic'
+    os.makedirs(output_dir, exist_ok=True)
+    outfile = os.path.join(output_dir, f'{args.symbol.replace(" ", ".")}.{args.currency}.csv')
+    
     df.to_csv(outfile)
     print(f"Datos guardados en {outfile}")
     sys.exit(0)
