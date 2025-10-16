@@ -1,10 +1,10 @@
-
 import pandas as pd
 import numpy as np
 import os
+import sys # Importar sys para la detección del entorno
+import time
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-import time
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.models import Sequential
@@ -13,11 +13,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 import joblib
 import matplotlib.pyplot as plt
 
-# --- Configuración ---
-DATA_PATH = 'all_enriched_data.csv'
-MODEL_OUTPUT_PATH = 'correlation_model.h5'
-SCALER_OUTPUT_PATH = 'correlation_scaler.joblib'
-
+# --- CONSTANTES ---
 SEQUENCE_LENGTH = 30
 TRAIN_TEST_SPLIT_RATIO = 0.85 # 85% para entrenamiento, 15% para validación
 
@@ -33,12 +29,43 @@ if __name__ == '__main__':
     print("Iniciando Fase 2: Entrenamiento del Modelo GRU de Correlación.")
     start_time = time.time()
 
-    # Cambiar al directorio del script para que las rutas relativas funcionen
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    # --- Detección de Entorno y Configuración de Rutas ---
+    IN_COLAB = 'google.colab' in sys.modules
+
+    if IN_COLAB:
+        print("Entorno de Google Colab detectado. Montando Google Drive...")
+        from google.colab import drive
+        drive.mount('/content/drive')
+        
+        # Asume que los datos y el output estarán en esta carpeta dentro de Drive
+        BASE_DIR = '/content/drive/MyDrive/backtrader_colab'
+        OUTPUT_DIR = os.path.join(BASE_DIR, 'correlation_output')
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        
+        DATA_PATH = os.path.join(BASE_DIR, 'all_enriched_data.csv')
+        MODEL_OUTPUT_PATH = os.path.join(OUTPUT_DIR, 'correlation_model.h5')
+        SCALER_OUTPUT_PATH = os.path.join(OUTPUT_DIR, 'correlation_scaler.joblib')
+        TRAINING_LOSS_PLOT_PATH = os.path.join(OUTPUT_DIR, 'training_loss.png')
+        
+        print(f"Ruta de datos: {DATA_PATH}")
+        print(f"Directorio de salida: {OUTPUT_DIR}")
+    else:
+        print("Entorno local detectado.")
+        # Cambiar al directorio del script para que las rutas relativas funcionen
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        
+        DATA_PATH = 'all_enriched_data.csv'
+        MODEL_OUTPUT_PATH = 'correlation_model.h5'
+        SCALER_OUTPUT_PATH = 'correlation_scaler.joblib'
+        TRAINING_LOSS_PLOT_PATH = 'training_loss.png'
 
     # --- 1. Carga de Datos ---
     if not os.path.exists(DATA_PATH):
-        print(f"Error: No se encuentra el archivo '{DATA_PATH}'. Ejecuta 'data_prep_correlation.py' primero.")
+        print(f"Error: No se encuentra el archivo '{DATA_PATH}'.")
+        if IN_COLAB:
+            print("Asegúrate de que el archivo está en la ruta correcta de Google Drive.")
+        else:
+            print("Ejecuta 'data_prep_correlation.py' primero.")
         exit()
     
     print(f"Cargando datos desde '{DATA_PATH}'...")
@@ -58,14 +85,27 @@ if __name__ == '__main__':
     print("Creando secuencias para cada ticker...")
     all_X, all_y = [], []
     grouped = df.groupby('ticker')
+    print("Loop iniciado")
     for ticker_name, ticker_data in grouped:
+        print(f"Procesando ticker: {ticker_name}")
         # Convertir el dataframe del ticker a numpy array
         ticker_values = ticker_data[feature_columns + [target_column]].values
+        print(f"  - Shape de los datos del ticker: {ticker_values.shape}")
         
         if len(ticker_values) > SEQUENCE_LENGTH:
+            print(f"  - Longitud de datos ({len(ticker_values)}) > SEQUENCE_LENGTH ({SEQUENCE_LENGTH}). Creando secuencias.")
             X_ticker, y_ticker = create_sequences(ticker_values, SEQUENCE_LENGTH)
             all_X.append(X_ticker)
             all_y.append(y_ticker)
+            print(f"  - Secuencias creadas para {ticker_name}. Shape X: {X_ticker.shape}, Shape y: {y_ticker.shape}")
+        else:
+            print(f"  - Longitud de datos ({len(ticker_values)}) <= SEQUENCE_LENGTH ({SEQUENCE_LENGTH}). Saltando ticker.")
+
+    print("Loop finalizado")
+    
+    if not all_X:
+        print("Error: No se pudieron crear secuencias. Verifica los datos de entrada y el valor de SEQUENCE_LENGTH.")
+        exit()
 
     X = np.concatenate(all_X, axis=0)
     y = np.concatenate(all_y, axis=0)
@@ -138,8 +178,8 @@ if __name__ == '__main__':
     plt.ylabel('Pérdida (MSE)')
     plt.legend()
     plt.grid(True)
-    plt.savefig('training_loss.png')
-    print("Gráfica guardada como 'training_loss.png'.")
+    plt.savefig(TRAINING_LOSS_PLOT_PATH)
+    print(f"Gráfica guardada como '{TRAINING_LOSS_PLOT_PATH}'.")
 
     end_time = time.time()
     print(f"\n¡Fase 2 completada en {end_time - start_time:.2f} segundos!")
