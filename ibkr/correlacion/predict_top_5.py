@@ -1,4 +1,3 @@
-
 '''
 Fase 3: Predicción de Top 5 Tickers con Mayor Rentabilidad
 
@@ -9,24 +8,47 @@ Finalmente, ordena los resultados y muestra los 5 tickers con la predicción má
 import pandas as pd
 import numpy as np
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+import sys
 import time
 import joblib
 from tensorflow.keras.models import load_model
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
 # --- Configuración ---
-DATA_PATH = 'all_enriched_data.csv'
-MODEL_PATH = 'correlation_model.h5'
-SCALER_PATH = 'correlation_scaler.joblib'
 SEQUENCE_LENGTH = 30 # Debe ser el mismo que en el entrenamiento
 
 if __name__ == '__main__':
     print("Iniciando Fase 3: Predicción de Top 5 Tickers.")
     start_time = time.time()
 
-    # Cambiar al directorio del script para que las rutas relativas funcionen
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    # --- Detección de Entorno y Configuración de Rutas ---
+    IN_COLAB = 'google.colab' in sys.modules
+
+    if IN_COLAB:
+        print("Entorno de Google Colab detectado. Montando Google Drive...")
+        from google.colab import drive
+        drive.mount('/content/drive')
+        
+        BASE_DIR = '/content/drive/MyDrive/backtrader_colab'
+        os.makedirs(BASE_DIR, exist_ok=True)
+        
+        DATA_PATH = os.path.join(BASE_DIR, 'all_enriched_data.csv')
+        MODEL_PATH = os.path.join(BASE_DIR, 'correlation_model.h5')
+        SCALER_PATH = os.path.join(BASE_DIR, 'correlation_scaler.joblib')
+        
+        print(f"Rutas de entrada (Drive):")
+        print(f"  - Datos: {DATA_PATH}")
+        print(f"  - Modelo: {MODEL_PATH}")
+        print(f"  - Scaler: {SCALER_PATH}")
+    else:
+        print("Entorno local detectado.")
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        
+        DATA_PATH = 'all_enriched_data.csv'
+        MODEL_PATH = 'correlation_model.h5'
+        SCALER_PATH = 'correlation_scaler.joblib'
 
     # --- 1. Carga de Modelo y Scaler ---
     if not all(os.path.exists(p) for p in [MODEL_PATH, SCALER_PATH, DATA_PATH]):
@@ -34,7 +56,10 @@ if __name__ == '__main__':
         print(f"- Modelo: {MODEL_PATH}")
         print(f"- Scaler: {SCALER_PATH}")
         print(f"- Datos: {DATA_PATH}")
-        print("Ejecuta 'data_prep_correlation.py' y 'train_correlation_model.py' primero.")
+        if IN_COLAB:
+            print("Asegúrate de que los archivos están en la ruta correcta de Google Drive y que los scripts anteriores se han ejecutado.")
+        else:
+            print("Ejecuta 'data_prep_correlation.py' y 'train_correlation_model.py' primero.")
         exit()
 
     print(f"Cargando modelo desde '{MODEL_PATH}'...")
@@ -56,21 +81,11 @@ if __name__ == '__main__':
 
     for ticker_name, ticker_data in grouped:
         if len(ticker_data) >= SEQUENCE_LENGTH:
-            # Tomar la última secuencia de datos para la predicción
             last_sequence_df = ticker_data.tail(SEQUENCE_LENGTH)
-            
-            # Extraer solo las features
             sequence_values = last_sequence_df[feature_columns].values
-            
-            # Escalar la secuencia
             sequence_scaled = scaler.transform(sequence_values)
-            
-            # Reformatear para el modelo: (1, sequence_length, num_features)
             sequence_reshaped = np.expand_dims(sequence_scaled, axis=0)
-            
-            # Realizar la predicción
             predicted_return = model.predict(sequence_reshaped, verbose=0)[0][0]
-            
             predictions[ticker_name] = predicted_return
         else:
             print(f"Aviso: No hay suficientes datos para el ticker '{ticker_name}' (se requieren {SEQUENCE_LENGTH} días). Se omitirá.")
@@ -80,7 +95,6 @@ if __name__ == '__main__':
         print("No se pudo realizar ninguna predicción.")
         exit()
 
-    # Ordenar los tickers por rentabilidad predicha (de mayor a menor)
     sorted_predictions = sorted(predictions.items(), key=lambda item: item[1], reverse=True)
 
     print("\n--- Predicción de Top 5 Tickers con Mayor Rentabilidad para la Próxima Semana ---")

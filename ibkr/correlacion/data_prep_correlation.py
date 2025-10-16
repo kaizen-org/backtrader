@@ -5,24 +5,17 @@ import glob
 import time
 import json
 import re
+import sys
 from concurrent.futures import ProcessPoolExecutor
 
 # --- Configuración ---
-# Rutas relativas al directorio del script (ibkr/correlacion/)
-DATA_FOLDER = os.path.join('..', 'historic') 
-OUTPUT_DATA_PATH = 'all_enriched_data.csv'
-OUTPUT_PEERS_PATH = 'peer_groups.json'
-
 FORWARD_WINDOW = 5  # Predecir la rentabilidad a 5 días
 N_PEERS = 5         # Número de pares a considerar para cada ticker
 
 def normalize_ticker(ticker):
     '''Limpia y normaliza el nombre de un ticker.'''
-    # Eliminar sufijos comunes como .USD
     ticker = re.sub(r'\.USD$', '', ticker, flags=re.IGNORECASE)
-    # Reemplazar espacios y puntos por guiones bajos
     ticker = re.sub(r'[ .]+', '_', ticker)
-    # Eliminar guiones bajos al final si existen
     ticker = ticker.rstrip('_')
     return ticker
 
@@ -40,7 +33,6 @@ def process_chunk(df_chunk, peer_map, market_returns, returns_df):
     """
     Enriquece un trozo del DataFrame (un ticker completo) con indicadores y datos de pares.
     """
-    # --- Cálculo de Indicadores Técnicos ---
     df_chunk['SMA_20'] = df_chunk['close'].rolling(window=20).mean()
     df_chunk['SMA_50'] = df_chunk['close'].rolling(window=50).mean()
     df_chunk['RSI_14'] = _calculate_rsi(df_chunk['close'], 14)
@@ -54,15 +46,11 @@ def process_chunk(df_chunk, peer_map, market_returns, returns_df):
     df_chunk['MACD_12_26_9'] = ema_12 - ema_26
     df_chunk['MACDs_12_26_9'] = df_chunk['MACD_12_26_9'].ewm(span=9, adjust=False).mean()
 
-    # --- Variable Objetivo y Rentabilidad Diaria ---
     df_chunk['daily_return'] = df_chunk['close'].pct_change()
     df_chunk['future_return_5d'] = (df_chunk['close'].shift(-FORWARD_WINDOW) / df_chunk['close']) - 1
 
-    # --- Añadir Features de Contexto ---
-    # 1. Rentabilidad del mercado
     df_chunk = df_chunk.join(market_returns, how='left')
 
-    # 2. Rentabilidad de los pares
     ticker_name = df_chunk['ticker'].iloc[0]
     df_chunk['peer_avg_return'] = df_chunk.apply(
         lambda row: returns_df.loc[row.name, peer_map.get(str(row.name.year), {}).get(ticker_name, [])].mean(),
@@ -75,9 +63,30 @@ if __name__ == '__main__':
     print("Iniciando Fase 1 (Revisada): Preparación de datos con contexto de correlación.")
     start_time = time.time()
 
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    IN_COLAB = 'google.colab' in sys.modules
 
-    # --- 1. Carga y Pre-cálculo de Rentabilidades ---
+    if IN_COLAB:
+        print("Entorno de Google Colab detectado. Montando Google Drive...")
+        from google.colab import drive
+        drive.mount('/content/drive')
+        
+        BASE_DIR = '/content/drive/MyDrive/backtrader_colab'
+        os.makedirs(BASE_DIR, exist_ok=True)
+        DATA_FOLDER = os.path.join(BASE_DIR, 'ibkr', 'historic') 
+        
+        OUTPUT_DATA_PATH = os.path.join(BASE_DIR, 'all_enriched_data.csv')
+        OUTPUT_PEERS_PATH = os.path.join(BASE_DIR, 'peer_groups.json')
+
+        print(f"Ruta de datos de entrada (Drive): {DATA_FOLDER}")
+        print(f"Rutas de datos de salida (Drive): {BASE_DIR}")
+    else:
+        print("Entorno local detectado.")
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        
+        DATA_FOLDER = os.path.join('..', 'historic') 
+        OUTPUT_DATA_PATH = 'all_enriched_data.csv'
+        OUTPUT_PEERS_PATH = 'peer_groups.json'
+
     all_files = glob.glob(os.path.join(DATA_FOLDER, '*.csv'))
     print(f"Encontrados {len(all_files)} ficheros CSV.")
 
@@ -97,21 +106,17 @@ if __name__ == '__main__':
 
     print("Combinando rentabilidades de todos los tickers...")
     returns_df = pd.concat(all_dfs, axis=1)
-    # Agrupar por nombre de columna (level=0) y calcular la media para resolver duplicados
     returns_df = returns_df.groupby(level=0, axis=1).mean()
     returns_df = returns_df.pct_change().fillna(0)
 
-    # --- 2. Cálculo de Correlaciones Anuales y Grupos de Pares ---
     print("Calculando grupos de pares anuales...")
     years = returns_df.index.year.unique()
     peer_map = {}
     for year in years:
         peer_map[str(year)] = {}
-        # Calcular matriz de correlación para el año
         corr_matrix = returns_df[returns_df.index.year == year].corr()
         
         for ticker in corr_matrix.columns:
-            # Encontrar los N pares más correlacionados (excluyendo a sí mismo)
             top_peers = corr_matrix[ticker].drop(ticker).sort_values(ascending=False).head(N_PEERS).index.tolist()
             peer_map[str(year)][ticker] = top_peers
 
@@ -119,11 +124,9 @@ if __name__ == '__main__':
     with open(OUTPUT_PEERS_PATH, 'w') as f:
         json.dump(peer_map, f, indent=4)
 
-    # --- 3. Enriquecimiento de Datos en Paralelo ---
     print("Enriqueciendo datos con indicadores y features de contexto...")
     market_returns = returns_df.mean(axis=1).rename('market_avg_return')
     
-    # Cargar todos los datos de nuevo, esta vez para el procesamiento completo
     full_data_list = []
     for file_path in all_files:
         try:
@@ -138,20 +141,17 @@ if __name__ == '__main__':
     full_raw_df['datetime'] = pd.to_datetime(full_raw_df['datetime'])
     full_raw_df.set_index('datetime', inplace=True)
 
-    # Procesar en chunks por ticker
     grouped = full_raw_df.groupby('ticker')
     ticker_chunks = [group for name, group in grouped]
 
     enriched_dfs = []
     with ProcessPoolExecutor() as executor:
-        # Pasamos el mapa de pares y las rentabilidades del mercado a cada proceso
         results = [executor.submit(process_chunk, chunk, peer_map, market_returns, returns_df) for chunk in ticker_chunks]
         for future in results:
             res = future.result()
             if res is not None:
                 enriched_dfs.append(res)
 
-    # --- 4. Limpieza y Guardado Final ---
     print(f"\nCombinando datos enriquecidos de {len(enriched_dfs)} tickers...")
     final_df = pd.concat(enriched_dfs)
 
